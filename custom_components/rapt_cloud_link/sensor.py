@@ -1,10 +1,13 @@
 import logging
+from datetime import timedelta
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorStateClass,
 )
+from homeassistant.const import EntityCategory
+from homeassistant.util import dt as dt_util
 from .const import BONDED_DEVICE_TYPES, CONF_TEMPERATURE_UNIT, DEFAULT_TEMPERATURE_UNIT, DOMAIN
 from .base import BaseRaptSensor
 
@@ -38,14 +41,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         sensors.append(BrewZillaConnectionStateSensor(brewzilla_coordinator, device_id))
         sensors.append(BrewZillaProfileSensor(brewzilla_coordinator, device_id))
         sensors.append(BrewZillaProfileStepSensor(brewzilla_coordinator, device_id))
+        sensors.append(BrewZillaProfileStepEndSensor(brewzilla_coordinator, device_id))
 
     # Hydrometer
     for device_id, device in hydrometer_coordinator.data.items():
         # name = device.get("name", f"Pill {device_id}")
         sensors.append(HydrometerTemperatureSensor(hydrometer_coordinator, device_id))
         sensors.append(HydrometerGravitySensor(hydrometer_coordinator, device_id))
+        sensors.append(HydrometerGravityVelocitySensor(hydrometer_coordinator, device_id))
         sensors.append(HydrometerBatterySensor(hydrometer_coordinator, device_id))
         sensors.append(HydrometerConnectionStateSensor(hydrometer_coordinator, device_id))
+        sensors.append(HydrometerLastActivitySensor(hydrometer_coordinator, device_id))
 
     # Temperature Controller
     for device_id, device in temperature_controller_coordinator.data.items():
@@ -195,8 +201,43 @@ class BrewZillaProfileStepSensor(BaseRaptSensor):
             "end_type": step.get("endType"),
             "duration": step.get("length") if step.get("endType") == "Duration" else None,
             "target_temperature": step.get("temperature"),
+            "step_start": self.coordinator.data.get(self._device_id, {}).get("activeProfileStepStart"),
             "next_step": steps[index + 1].get("name") if index + 1 < len(steps) else None,
         }
+
+
+class BrewZillaProfileStepEndSensor(BaseRaptSensor):
+    """BrewZilla Profile Step End Sensor: when the active step's duration runs out.
+
+    Only for steps that end after a duration counted from their start, the
+    others end on a temperature, a gravity or a button press.
+    """
+
+    def __init__(self, coordinator, device_id: str):
+        super().__init__(
+            coordinator,
+            device_id,
+            model="BrewZilla",
+            name_suffix="Profile Step End",
+            unique_suffix="profile_step_end",
+        )
+        self._attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    @property
+    def native_value(self):
+        device = self.coordinator.data.get(self._device_id)
+        if not device:
+            return None
+        steps, index = _active_profile_steps(device)
+        if index is None:
+            return None
+        step = steps[index]
+        if step.get("endType") != "Duration" or step.get("durationType") not in (None, "Start"):
+            return None
+        start = device.get("activeProfileStepStart")
+        if not start or step.get("length") is None:
+            return None
+        return dt_util.parse_datetime(start) + timedelta(seconds=step["length"])
 
 
 # ---------------------
@@ -300,8 +341,54 @@ class HydrometerConnectionStateSensor(BaseRaptSensor):
         """Return the current connection state."""
         device = self.coordinator.data.get(self._device_id)
         if device:
-            return device.get("connectionState", "Disconnected")
+            # The API leaves it out for Pills, which is not the same as Disconnected
+            return device.get("connectionState")
         return "Disconnected"
+
+
+class HydrometerGravityVelocitySensor(BaseRaptSensor):
+    """Hydrometer Gravity Velocity Sensor: how fast gravity changes, in points per day."""
+
+    def __init__(self, coordinator, device_id: str):
+        super().__init__(
+            coordinator,
+            device_id,
+            model="Hydrometer",
+            name_suffix="Gravity Velocity",
+            unique_suffix="gravity_velocity",
+            unit="ppd",  # One point is 0.001 SG
+        )
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_icon = "mdi:chart-line"
+
+    @property
+    def native_value(self):
+        device = self.coordinator.data.get(self._device_id)
+        if device and device.get("gravityVelocity") is not None:
+            return round(device["gravityVelocity"], 2)
+        return None
+
+
+class HydrometerLastActivitySensor(BaseRaptSensor):
+    """Hydrometer Last Activity Sensor: when it last reported."""
+
+    def __init__(self, coordinator, device_id: str):
+        super().__init__(
+            coordinator,
+            device_id,
+            model="Hydrometer",
+            name_suffix="Last Activity",
+            unique_suffix="last_activity",
+        )
+        self._attr_device_class = SensorDeviceClass.TIMESTAMP
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self):
+        device = self.coordinator.data.get(self._device_id)
+        if device and device.get("lastActivityTime"):
+            return dt_util.parse_datetime(device["lastActivityTime"])
+        return None
 
 
 # ---------------------
