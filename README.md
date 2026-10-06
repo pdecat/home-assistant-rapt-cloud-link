@@ -30,6 +30,10 @@ This is a custom integration for Home Assistant that connects to [RAPT Cloud](ht
   - BrewZilla At Target Temperature (binary): on while the temperature the
     BrewZilla regulates on (its bonded probe, unless set to use its internal
     sensor) is within its heating hysteresis of the target.
+  - Pill Profile, Profile Step and Profile Session: the same profile entities as
+    the BrewZilla's, for a Pill running a fermentation profile. The Profile
+    sensor of either also carries the session's estimated end, original and
+    final gravity, and the profile's alert texts as attributes.
   - Pill Gravity Velocity, in points per day (one point is 0.001 SG), and Last
     Activity, when the Pill last reported. The Pill Connection sensor now reads
     `unknown` rather than `Disconnected`, as the API does not report it for Pills.

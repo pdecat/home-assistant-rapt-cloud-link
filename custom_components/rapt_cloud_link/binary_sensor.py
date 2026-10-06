@@ -5,13 +5,18 @@ from .base import BaseRaptBinarySensor
 
 async def async_setup_entry(hass, entry, async_add_entities):
     brewzilla_coordinator = hass.data[DOMAIN][entry.entry_id]["brewzilla_coordinator"]
+    hydrometer_coordinator = hass.data[DOMAIN][entry.entry_id]["hydrometer_coordinator"]
 
     binary_sensors = []
 
     # BrewZilla
     for device_id in brewzilla_coordinator.data:
-        binary_sensors.append(BrewZillaProfileSessionBinarySensor(brewzilla_coordinator, device_id))
+        binary_sensors.append(ProfileSessionBinarySensor(brewzilla_coordinator, device_id, model="BrewZilla"))
         binary_sensors.append(BrewZillaAtTargetTemperatureBinarySensor(brewzilla_coordinator, device_id))
+
+    # Hydrometer
+    for device_id in hydrometer_coordinator.data:
+        binary_sensors.append(ProfileSessionBinarySensor(hydrometer_coordinator, device_id, model="Hydrometer"))
 
     if binary_sensors:
         async_add_entities(binary_sensors, update_before_add=True)
@@ -27,14 +32,14 @@ def _control_temperature(device):
     return device.get("temperature")
 
 
-class BrewZillaProfileSessionBinarySensor(BaseRaptBinarySensor):
-    """BrewZilla Profile Session Binary Sensor: on while a profile session runs."""
+class ProfileSessionBinarySensor(BaseRaptBinarySensor):
+    """Profile Session Binary Sensor: on while a BrewZilla's or a Pill's profile session runs."""
 
-    def __init__(self, coordinator, device_id: str):
+    def __init__(self, coordinator, device_id: str, model: str):
         super().__init__(
             coordinator,
             device_id,
-            model="BrewZilla",
+            model=model,
             name_suffix="Profile Session",
             unique_suffix="profile_session",
         )

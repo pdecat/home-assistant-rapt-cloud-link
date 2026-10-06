@@ -39,8 +39,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         # name = device.get("name", f"BrewZilla {device_id}")
         sensors.append(BrewZillaTemperatureSensor(brewzilla_coordinator, device_id))
         sensors.append(BrewZillaConnectionStateSensor(brewzilla_coordinator, device_id))
-        sensors.append(BrewZillaProfileSensor(brewzilla_coordinator, device_id))
-        sensors.append(BrewZillaProfileStepSensor(brewzilla_coordinator, device_id))
+        sensors.append(ProfileSensor(brewzilla_coordinator, device_id, model="BrewZilla"))
+        sensors.append(ProfileStepSensor(brewzilla_coordinator, device_id, model="BrewZilla"))
         sensors.append(BrewZillaProfileStepEndSensor(brewzilla_coordinator, device_id))
 
     # Hydrometer
@@ -52,6 +52,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         sensors.append(HydrometerBatterySensor(hydrometer_coordinator, device_id))
         sensors.append(HydrometerConnectionStateSensor(hydrometer_coordinator, device_id))
         sensors.append(HydrometerLastActivitySensor(hydrometer_coordinator, device_id))
+        sensors.append(ProfileSensor(hydrometer_coordinator, device_id, model="Hydrometer"))
+        sensors.append(ProfileStepSensor(hydrometer_coordinator, device_id, model="Hydrometer"))
 
     # Temperature Controller
     for device_id, device in temperature_controller_coordinator.data.items():
@@ -117,6 +119,15 @@ class BrewZillaConnectionStateSensor(BaseRaptSensor):
         return "Disconnected"
 
 
+def _normalize_gravity(sg):
+    """Return a gravity as SG, which the API sometimes reports in thousandths (1050 for 1.050)."""
+    if sg is None:
+        return None
+    while sg > 10:
+        sg /= 10
+    return round(sg, 3)
+
+
 def _active_profile_steps(device):
     """Return the active profile's steps in order, and the index of the active one."""
     session = device.get("activeProfileSession") or {}
@@ -127,14 +138,14 @@ def _active_profile_steps(device):
     return steps, index
 
 
-class BrewZillaProfileSensor(BaseRaptSensor):
-    """BrewZilla Profile Sensor: the profile its session is running, if any."""
+class ProfileSensor(BaseRaptSensor):
+    """Profile Sensor: the profile a BrewZilla's or a Pill's session is running, if any."""
 
-    def __init__(self, coordinator, device_id: str):
+    def __init__(self, coordinator, device_id: str, model: str):
         super().__init__(
             coordinator,
             device_id,
-            model="BrewZilla",
+            model=model,
             name_suffix="Profile",
             unique_suffix="profile",
         )
@@ -155,23 +166,28 @@ class BrewZillaProfileSensor(BaseRaptSensor):
         if not session:
             return {}
         steps, _ = _active_profile_steps(device)
+        profile = session.get("profile") or {}
         return {
             "profile_id": device.get("activeProfileId"),
             "session_id": session.get("id"),
             "session_start": session.get("startDate"),
+            "estimated_end": session.get("estimatedEndDate"),
             "profile_length": session.get("profileLength"),
+            "original_gravity": _normalize_gravity(session.get("originalGravity")),
+            "final_gravity": _normalize_gravity(session.get("finalGravity")),
             "step_count": len(steps),
+            "alerts": [alert["alertText"] for alert in profile.get("alerts") or [] if alert.get("alertText")],
         }
 
 
-class BrewZillaProfileStepSensor(BaseRaptSensor):
-    """BrewZilla Profile Step Sensor: the step its profile session is at, if any."""
+class ProfileStepSensor(BaseRaptSensor):
+    """Profile Step Sensor: the step a BrewZilla's or a Pill's profile session is at, if any."""
 
-    def __init__(self, coordinator, device_id: str):
+    def __init__(self, coordinator, device_id: str, model: str):
         super().__init__(
             coordinator,
             device_id,
-            model="BrewZilla",
+            model=model,
             name_suffix="Profile Step",
             unique_suffix="profile_step",
         )
@@ -291,10 +307,7 @@ class HydrometerGravitySensor(BaseRaptSensor):
         """Return the current gravity."""
         device = self.coordinator.data.get(self._device_id)
         if device:
-            sg = device.get("gravity")
-            while sg > 10:
-                sg /= 10
-            return round(sg, 3)
+            return _normalize_gravity(device.get("gravity"))
         return None
 
 
